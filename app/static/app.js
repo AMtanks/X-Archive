@@ -75,9 +75,15 @@ function settleThumb(card) {
 const authorPicker = $('#author-picker'), authorNative = $('#media-author');
 const authorButton = authorPicker.querySelector('.picker-button'), authorList = authorPicker.querySelector('.picker-list');
 function syncAuthorPicker() {
-  authorButton.firstElementChild.textContent = authorNative.selectedOptions[0]?.textContent || '全部推主';
+  const avatar = value => {
+    const author = state?.authors.find(a => String(a.id) === value);
+    if (!author) return '<span class="picker-avatar picker-avatar-empty" aria-hidden="true"></span>';
+    return `<span class="picker-avatar" aria-hidden="true">${author.avatar_url ? `<img src="${esc(author.avatar_url)}" alt="" loading="lazy">` : esc((author.display_name || accountName(author.handle)).slice(0, 1))}</span>`;
+  };
+  const selected = authorNative.selectedOptions[0];
+  authorButton.firstElementChild.innerHTML = `${selected?.value !== '0' ? avatar(selected?.value) : ''}<span class="picker-label">${esc(selected?.textContent || '全部推主')}</span>`;
   if (authorList.classList.contains('hidden')) return;
-  authorList.innerHTML = [...authorNative.options].map(o => `<div class="picker-option" role="option" data-value="${esc(o.value)}" aria-selected="${o.selected}">${esc(o.textContent)}</div>`).join('');
+  authorList.innerHTML = [...authorNative.options].map(o => `<div class="picker-option" role="option" data-value="${esc(o.value)}" aria-selected="${o.selected}">${avatar(o.value)}<span class="picker-label">${esc(o.textContent)}</span></div>`).join('');
 }
 function setAuthorPicker(open) {
   if (open === !authorList.classList.contains('hidden')) return;
@@ -131,7 +137,9 @@ function warmViewerImage(item) {
   viewerWarm.set(url, img);
   while (viewerWarm.size > VIEWER_AHEAD + 6) viewerWarm.delete(viewerWarm.keys().next().value);
 }
-function showViewer(items, index) {
+function showViewer(items, index, {immediateThumbnail = false} = {}) {
+  const dialog = $('#viewer-dialog');
+  if (!dialog.open && viewerDeleting) return;
   viewerItems = items;
   viewerIndex = index;
   const item = items[index];
@@ -146,14 +154,20 @@ function showViewer(items, index) {
     // Reuse the preloaded (already decoded) element when there is one.
     const img = viewerWarm.get(item.content_url) || Object.assign(new Image(), {src:item.content_url});
     img.alt = '已保存的原图';
-    const placeholder = setTimeout(() => {
+    const showPlaceholder = () => {
       if (load !== viewerLoad) return;
       stage.innerHTML = `<img class="viewer-placeholder" src="${esc(item.thumbnail_url)}" alt="">`;
-    }, 120);
-    const show = () => { clearTimeout(placeholder); if (load === viewerLoad) stage.replaceChildren(img); };
+    };
     // A fully downloaded image paints whole, so swap as soon as the bytes are in (decode() can stall while the window is hidden).
-    if (img.complete) show();
-    else { img.addEventListener('load', show, {once:true}); img.addEventListener('error', show, {once:true}); img.decode().then(show, () => {}); }
+    if (img.complete) stage.replaceChildren(img);
+    else {
+      if (immediateThumbnail) showPlaceholder();
+      const placeholder = immediateThumbnail ? null : setTimeout(showPlaceholder, 120);
+      const show = () => { clearTimeout(placeholder); if (load === viewerLoad) stage.replaceChildren(img); };
+      img.addEventListener('load', show, {once:true});
+      img.addEventListener('error', show, {once:true});
+      img.decode().then(show, () => {});
+    }
   }
   // Preload the next 10 (and the previous one) so fast paging never waits on the network.
   [index - 1, ...Array.from({length:VIEWER_AHEAD}, (_, i) => index + 1 + i)].forEach(i => warmViewerImage(items[i]));
@@ -170,10 +184,8 @@ function showViewer(items, index) {
   }
   $('#viewer-counter').textContent = `${index + 1} / ${items.length}`;
   renderStrip(items, index);
-  $('[data-action="viewer-prev"]').disabled = index === 0;
-  $('[data-action="viewer-next"]').disabled = index + 1 === items.length;
   document.body.classList.add('gallery-hover-paused');
-  if (!$('#viewer-dialog').open) $('#viewer-dialog').showModal();
+  if (!dialog.open) dialog.showModal();
   if (video) video.play().catch(() => {});
 }
 // Filmstrip under the viewer (Photos-style): narrow thumbs either side, the current one wider at its real aspect.
@@ -191,7 +203,7 @@ function renderStrip(items, index) {
   const from = Math.max(0, index - STRIP_RADIUS), to = Math.min(items.length - 1, index + STRIP_RADIUS);
   const keep = new Set(items.slice(from, to + 1).map(item => item.media_id));
   stripNodes.forEach((node, id) => { if (!keep.has(id)) { node.remove(); stripNodes.delete(id); } });
-  const focusNode = stripNodes.get(items[index].media_id);
+  const focusNode = stripNodes.get(items[index]?.media_id);
   const focusWidth = focusNode ? stripFocusWidth(focusNode) : STRIP_FOCUS_H * .75;
   for (let i = from; i <= to; i++) {
     const item = items[i];
@@ -228,6 +240,7 @@ $('#viewer-strip').addEventListener('click', event => {
   if (node && stripItems && !viewerDeleting) showViewer(stripItems, Number(node.dataset.index));
 });
 $('#viewer-dialog').addEventListener('close', () => {
+  viewerLoad++;
   $('#viewer-stage').innerHTML = '';
   $('#viewer-strip').replaceChildren(); stripNodes.clear(); stripItems = null;
   // Modal focus restoration is not a fresh hover on the original card.
@@ -235,6 +248,10 @@ $('#viewer-dialog').addEventListener('close', () => {
   document.body.classList.add('gallery-hover-paused');
 });
 $('#viewer-dialog').addEventListener('click', event => {
+  if (event.target === $('#viewer-stage') || event.target === $('.viewer-top')) {
+    event.currentTarget.close();
+    return;
+  }
   const rect = event.currentTarget.getBoundingClientRect();
   if (event.target === event.currentTarget && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) event.currentTarget.close();
 });
@@ -379,8 +396,6 @@ document.addEventListener('click', async (event) => {
   if (action === 'clear-selection') { selectedMedia.clear(); renderSelection(); return; }
   if (action === 'select-all-media') { mediaResult.items.forEach(item => { if (item.media_id) selectedMedia.add(item.media_id); }); renderSelection(); return; }
   if (action === 'delete-selected') { await deleteItems([...selectedMedia]); return; }
-  if (action === 'close-viewer') { $('#viewer-dialog').close(); return; }
-  if (action === 'viewer-prev' || action === 'viewer-next') { if (viewerDeleting) return; showViewer(viewerItems, viewerIndex + (action === 'viewer-prev' ? -1 : 1)); return; }
   if (action === 'manage-media') { const author = state.authors.find(a => a.id === id); if (author && mediaPlatform !== 'all' && mediaPlatform !== platformKey(author.handle)) { setPlatform('media', platformKey(author.handle)); } if ($('#media-author').value !== String(id)) mediaResult = null; $('#media-author').value = String(id); syncAuthorPicker(); view('media'); return; }
   if (action === 'delete-media') { await deleteItems([mediaResult.items[Number(button.dataset.index)].media_id]); return; }
   if (action === 'settings' || action === 'activity') { view(action); return; }
@@ -393,10 +408,10 @@ document.addEventListener('click', async (event) => {
     if (action === 'open-media') await api('media/open', 'POST', {path:mediaResult.items[Number(button.dataset.index)].path});
     if (action === 'refresh-media') await loadMedia();
     if (action === 'restore-media') { const item = mediaResult.items[Number(button.dataset.index)]; await api('media/restore', 'POST', {tweet_id:item.tweet_id,num:item.num}); toast('已允许重新下载，请运行该推主的历史补查'); await loadMedia({keepPosition:true}); }
-    if (action === 'sync' || action === 'full') { const r = await api(`authors/${id}/sync`, 'POST', {full: action === 'full'}); toast(r.queued ? '已优先安排手动同步；如有扫描正在进行，将在其结束后开始' : '这个推主的任务已在进行或已优先安排'); }
+    if (action === 'sync' || action === 'full') { const author = state.authors.find(a => a.id === id); const cooled = author && platformName(author.handle) === 'X' && Date.parse(state.settings.rate_limit_until || '') > Date.now(); const r = await api(`authors/${id}/sync`, 'POST', {full: action === 'full'}); toast(cooled && r.queued ? 'X 正在限流冷却，手动同步仍会尝试；连续尝试可能延长等待' : r.queued ? '已优先安排手动同步；如有扫描正在进行，将在其结束后开始' : '这个推主的任务已在进行或已优先安排'); }
     if (action === 'cancel') { await api(`authors/${id}/cancel`, 'POST'); toast('正在停止任务，已下载文件会保留'); }
     if (action === 'sync-all') { const r = await api('sync-all', 'POST'); toast(`已加入 ${r.queued} 位推主的同步任务${r.unavailable ? `；${r.unavailable} 位暂不可同步，请检查平台登录` : ""}`); }
-    if (action === 'open-folder') await api('open-folder', 'POST');
+    if (action === 'open-folder') { const authorId = currentView === 'media' ? Number(authorNative.value) || 0 : 0; await api(`open-folder?author_id=${authorId}`, 'POST'); }
     if (action === 'login') { await api('login', 'POST'); toast('请在新打开的 X 窗口中登录。成功后会自动保存连接。'); }
     if (action === 'login-platform') { await api(`login/${button.dataset.platform}`, 'POST'); toast('请在新打开的窗口中登录。成功后会自动保存连接。'); }
     if (action === 'finish-weibo') { await api('login/weibo/finish', 'POST'); toast('正在读取微博登录状态，请稍候。'); }
@@ -460,7 +475,10 @@ async function loadMedia({keepPosition = false} = {}) {
     const excluded = $('#media-mode').value === 'excluded';
     $('#media-kind').disabled = excluded;
     if (excluded) $('#media-kind').value = 'all';
-    const result = await api(`media?author_id=${Number($('#media-author').value)}&platform=${mediaPlatform}&kind=${$('#media-kind').value}&excluded=${excluded}&all_items=true`);
+    const query = `media?author_id=${Number($('#media-author').value)}&platform=${mediaPlatform}&kind=${$('#media-kind').value}&excluded=${excluded}`;
+    // Fresh loads fetch only the first page so cards appear at once; the full list follows in the background.
+    const fast = !keepPosition;
+    const result = await api(query + (fast ? '' : '&all_items=true'));
     if (request !== mediaRequest) return;
     mediaResult = result;
     lastGalleryLoad = Date.now();
@@ -475,6 +493,13 @@ async function loadMedia({keepPosition = false} = {}) {
     renderSelection();
     $('#gallery-result-label').textContent = `${excluded ? '忽略清单' : '已保存'} · 共 ${number(result.total)} 份`;
     scheduleLayout();
+    if (fast && result.total > result.items.length) {
+      $('#media-body').setAttribute('aria-busy','false');
+      try {
+        const full = await api(query + '&all_items=true');
+        if (request === mediaRequest) { mediaResult = full; maybeAppendMedia(); }
+      } catch { /* the first page stays usable */ }
+    }
   } catch (error) { if (request === mediaRequest) { setGalleryHTML('<div class="gallery-empty"><strong>暂时无法读取媒体</strong><p>请点击“刷新”重试。</p></div>'); toast(error.message, true); } }
   finally { if (request === mediaRequest) { mediaLoading = false; $('#media-body').setAttribute('aria-busy','false'); } }
 }
@@ -666,19 +691,30 @@ async function deleteViewerItem() {
   if (viewerDeleting || deletingMedia || mediaLoading) return;
   const item = viewerItems[viewerIndex];
   if (!item) return;
+  const dialog = $('#viewer-dialog'), stage = $('#viewer-stage');
   const items = viewerItems, index = viewerIndex;
+  const remaining = items.filter(entry => entry.media_id !== item.media_id);
   viewerDeleting = true;
   // Release the playing video first: Windows refuses to delete a file the player still has open.
-  const video = $('#viewer-stage video');
+  const video = stage.querySelector('video');
   if (video) { video.pause(); video.removeAttribute('src'); video.load(); }
   try {
+    // Update the preview before waiting for the file operation and catalog refresh.
+    if (remaining.length) {
+      showViewer(remaining, Math.min(index, remaining.length - 1), {immediateThumbnail:true});
+    } else {
+      viewerItems = remaining;
+      viewerLoad++;
+      stage.replaceChildren();
+      renderStrip(remaining, 0);
+      $('#viewer-counter').textContent = '';
+    }
     const deleted = await deleteItems([item.media_id]);
-    if (!$('#viewer-dialog').open || viewerItems !== items) return;
-    if (!deleted.includes(item.media_id)) { showViewer(items, index); return; }
-    // The gallery result can be replaced during deletion; keep this viewer sequence in sync.
-    const remaining = items.filter(entry => entry.media_id !== item.media_id);
-    if (!remaining.length) { $('#viewer-dialog').close(); return; }
-    showViewer(remaining, Math.min(index, remaining.length - 1));
+    const succeeded = deleted.includes(item.media_id);
+    if (succeeded) viewerWarm.delete(item.content_url);
+    if (!dialog.open || viewerItems !== remaining) return;
+    if (!succeeded) showViewer(items, index, {immediateThumbnail:true});
+    else if (!remaining.length) dialog.close();
   } finally { viewerDeleting = false; }
 }
 // Start on gallery media or workspace whitespace; controls keep their normal gestures.

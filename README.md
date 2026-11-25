@@ -1,19 +1,19 @@
-# Media Archive
+# X Archive
 
-Media Archive 是 Windows 本地媒体归档工具，用于按账号保存你有权访问的 X、Instagram 和微博图片与视频。支持中文、English、增量同步和媒体画廊。
+X Archive 是 Windows 本地媒体归档工具，用于按账号保存你有权访问的 X、Instagram 和微博图片与视频。支持中文、English、增量同步和媒体画廊。
 
-Media Archive is a Windows desktop app for archiving accessible images and videos from X, Instagram, and Weibo accounts. It supports Chinese and English, incremental sync, and a visual gallery.
+X Archive is a Windows desktop app for archiving accessible images and videos from X, Instagram, and Weibo accounts. It supports Chinese and English, incremental sync, and a visual gallery.
 
-![Media Archive 媒体画廊 / media gallery](docs/screenshot.png)
+![X Archive 媒体画廊 / media gallery](docs/screenshot.png)
 
 ## 下载与使用 / Download and use
 
-1. 从 [Releases](https://github.com/AMtanks/Media-Archive/releases) 下载 Windows ZIP，完整解压后运行 `MediaArchive.exe`。Windows 10/11 需要 Microsoft Edge WebView2 Runtime。
+1. 从 [Releases](https://github.com/AMtanks/X-Archive/releases) 下载 Windows ZIP，完整解压后运行 `XArchive.exe`。Windows 10/11 需要 Microsoft Edge WebView2 Runtime。
 2. 在设置中选择中文或 English，并分别登录需要使用的平台。微博登录后保持登录窗口打开，切回应用点击“已在窗口中登录”。
 3. 在“添加推主”中输入 X 账号或平台主页链接。微博使用 `https://weibo.com/u/数字ID` 格式。
 4. 首次同步扫描历史内容；应用运行时，后续按设置周期增量检查。关闭窗口会收进系统托盘，退出托盘程序或电脑休眠时暂停。
 
-Download the Windows ZIP from [Releases](https://github.com/AMtanks/Media-Archive/releases), extract the entire archive, and run `MediaArchive.exe`. Sign in to the desired platforms in Settings, then add account profile URLs. For Weibo, keep its login window open after signing in and select **I have signed in**. Sync runs while the application is open or in the system tray.
+Download the Windows ZIP from [Releases](https://github.com/AMtanks/X-Archive/releases), extract the entire archive, and run `XArchive.exe`. Sign in to the desired platforms in Settings, then add account profile URLs. For Weibo, keep its login window open after signing in and select **I have signed in**. Sync runs while the application is open or in the system tray.
 
 ## 功能 / Features
 
@@ -37,7 +37,7 @@ py -3.12 -m venv .venv
 .venv\Scripts\python.exe main.py
 ```
 
-`build.cmd` creates a portable Windows build in `work/package-dist/MediaArchive`. It requires PyInstaller from `requirements-dev.txt`. Automated tests: `.venv\Scripts\python.exe -m pytest -q`.
+`build.cmd` creates a portable Windows build in `work/package-dist/XArchive`. It requires PyInstaller from `requirements-dev.txt`. Automated tests: `.venv\Scripts\python.exe -m pytest -q`.
 
 ## 授权 / License
 

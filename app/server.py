@@ -445,9 +445,16 @@ def create_app(data_dir, start_engine=True):
         return {"path": app.state.folder_callback()}
 
     @app.post("/api/open-folder")
-    def open_folder():
+    def open_folder(author_id: int = 0):
         folder = Path(store.get_setting("download_dir"))
-        folder.mkdir(parents=True, exist_ok=True)
+        if author_id:
+            author = require_author(author_id)
+            root = canonical_path(folder)
+            folder = canonical_path(store.author_folder(author))
+            if folder.parent != root or not folder.is_dir():
+                raise HTTPException(404, "推主文件夹不存在，请检查保存位置")
+        else:
+            folder.mkdir(parents=True, exist_ok=True)
         if os.name == "nt":
             os.startfile(str(folder))
         return {"ok": True}

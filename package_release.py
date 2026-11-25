@@ -7,12 +7,12 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VERSION = 'v1.0.0'
-NAME = f'MediaArchive-{VERSION}-Windows-x64'
+VERSION = 'v1.1.0'
+NAME = f'XArchive-{VERSION}-Windows-x64'
 OUT = ROOT / 'release'
 STAGE = OUT / NAME
 ZIP = OUT / f'{NAME}.zip'
-BUILD = ROOT / 'work' / 'package-dist' / 'MediaArchive'
+BUILD = ROOT / 'work' / 'package-dist' / 'XArchive'
 GALLERY_SOURCE = ROOT / 'work' / 'source-download' / 'gallery_dl-1.32.19.tar.gz'
 SOURCE_FILES = ('.gitignore', '.gitattributes', 'README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md',
                 'requirements.txt', 'requirements-dev.txt', 'requirements-lock.txt', 'build.cmd',
@@ -60,7 +60,7 @@ def license_files(target):
 
 
 def main():
-    if not (BUILD / 'MediaArchive.exe').is_file() or not GALLERY_SOURCE.is_file():
+    if not (BUILD / 'XArchive.exe').is_file() or not GALLERY_SOURCE.is_file():
         raise SystemExit('Build the executable and download gallery-dl 1.32.19 source first.')
     if STAGE.exists() or ZIP.exists():
         raise SystemExit('Release output already exists. Choose a new version or move the existing release aside.')
@@ -72,7 +72,7 @@ def main():
     license_files(STAGE / 'third-party-licenses')
     (STAGE / 'third-party-source').mkdir()
     shutil.copy2(GALLERY_SOURCE, STAGE / 'third-party-source' / GALLERY_SOURCE.name)
-    with zipfile.ZipFile(STAGE / 'MediaArchive-source.zip', 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+    with zipfile.ZipFile(STAGE / 'XArchive-source.zip', 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for path in source_paths():
             archive.write(path, path.relative_to(ROOT).as_posix())
     with zipfile.ZipFile(ZIP, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:

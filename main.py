@@ -113,7 +113,7 @@ def main():
     import webview
     import pystray
     from PIL import Image
-    window = webview.create_window("Media Archive", url, width=1360, height=900,
+    window = webview.create_window("X Archive", url, width=1360, height=900,
                                    min_size=(850, 620), background_color="#101419")
     quitting = threading.Event()
     login_lock = threading.Lock()
@@ -214,8 +214,8 @@ def main():
     app.state.activate_callback = lambda: False if quitting.is_set() else show()
     with Image.open(RESOURCE_ROOT / 'assets' / 'app-icon.png') as icon_image:
         image = icon_image.convert('RGBA').resize((64, 64), Image.Resampling.LANCZOS)
-    tray = pystray.Icon("MediaArchive", image, "Media Archive", menu=pystray.Menu(
-        pystray.MenuItem(lambda _: ui_text("打开 Media Archive", "Open Media Archive"), show, default=True),
+    tray = pystray.Icon("MediaArchive", image, "X Archive", menu=pystray.Menu(
+        pystray.MenuItem(lambda _: ui_text("打开 X Archive", "Open X Archive"), show, default=True),
         pystray.MenuItem(lambda _: ui_text("打开下载文件夹", "Open download folder"), lambda *_: os.startfile(app.state.store.get_setting("download_dir"))
                          if Path(app.state.store.get_setting("download_dir")).exists() else None),
         pystray.MenuItem(lambda _: ui_text("退出并停止同步", "Quit and stop syncing"), quit_app),
@@ -244,5 +244,5 @@ if __name__ == "__main__":
         (ROOT / "startup-error.log").write_text(text, encoding="utf-8")
         if os.name == "nt":
             import ctypes
-            ctypes.windll.user32.MessageBoxW(None, "启动失败 / Startup failed.\nPlease see startup-error.log.", "Media Archive", 16)
+            ctypes.windll.user32.MessageBoxW(None, "启动失败 / Startup failed.\nPlease see startup-error.log.", "X Archive", 16)
         raise

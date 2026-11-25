@@ -21,6 +21,28 @@ def session(client):
     return {"X-App-Token": re.search('name="app-token" content="([^"]+)"',client.get('/').text)[1]}
 
 
+def test_open_folder_uses_selected_creator_or_download_root(tmp_path, monkeypatch):
+    import app.server as server
+    app = create_app(tmp_path/'data', start_engine=False)
+    store = app.state.store
+    root = tmp_path/'downloads'
+    store.save_settings({'download_dir': str(root)})
+    author_folder = store.author_folder(store.author(1))
+    author_folder.mkdir(parents=True)
+    opened = []
+    monkeypatch.setattr(server.os, 'startfile', lambda path: opened.append(Path(path)), raising=False)
+    with TestClient(app) as client:
+        headers = session(client)
+        assert client.post('/api/open-folder?author_id=1', headers=headers).status_code == 200
+        assert opened[-1] == author_folder
+        assert client.post('/api/open-folder', headers=headers).status_code == 200
+        assert opened[-1] == root
+        assert client.post('/api/open-folder?author_id=999', headers=headers).status_code == 404
+        author_folder.rmdir()
+        assert client.post('/api/open-folder?author_id=1', headers=headers).status_code == 404
+        assert not author_folder.exists()
+
+
 def test_platform_filter_for_saved_and_ignored_media(tmp_path):
     app = create_app(tmp_path/'data', start_engine=False)
     store = app.state.store

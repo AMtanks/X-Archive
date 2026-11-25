@@ -5,7 +5,7 @@ if not exist ".venv\Scripts\python.exe" (
   echo Run install.cmd and install requirements-dev.txt and PyInstaller first.
   exit /b 1
 )
-".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onedir --noconsole --name MediaArchive ^
+".venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --onedir --noconsole --name XArchive ^
   --icon "%CD%\assets\app-icon.ico" ^
   --distpath "work\package-dist" --workpath "work\package-build" --specpath "work" ^
   --add-data "%CD%\app\static;app/static" --add-data "%CD%\assets;assets" ^
@@ -14,5 +14,5 @@ if not exist ".venv\Scripts\python.exe" (
   --hidden-import uvicorn.protocols.websockets.auto --hidden-import uvicorn.lifespan.on ^
   --hidden-import app.worker --hidden-import webview.platforms.edgechromium ^
   "%CD%\main.py" || exit /b 1
-echo Built work\package-dist\MediaArchive\MediaArchive.exe
+echo Built work\package-dist\XArchive\XArchive.exe
 echo FFmpeg is not bundled; it is downloaded when needed.

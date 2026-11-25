@@ -293,8 +293,20 @@ class ArchiveJob(AssetJob):
         super().__init__(url, parent)
         self.pipeline_owner = parent is None or not hasattr(parent, "pipeline")
         self.pipeline = Pipeline() if self.pipeline_owner else parent.pipeline
+        self.known = set()
+        self.stop_after_tweet = False
+        if self.pipeline_owner and PAYLOAD.get('stop_at_known'):
+            with sqlite3.connect(Path(PAYLOAD['data_dir']) / 'library.sqlite3', timeout=30) as db:
+                self.known.update((str(tweet), num) for tweet, num in db.execute(
+                    'SELECT tweet_id,num FROM media WHERE author_id=?', (PAYLOAD['author_id'],)))
+                from .store import canonical_path
+                folder = canonical_path(media_folder())
+                self.known.update((str(tweet), num) for tweet, num, path in db.execute(
+                    'SELECT tweet_id,num,path FROM exclusions') if path and canonical_path(path).parent == folder)
 
     def handle_directory(self, kwdict):
+        if self.stop_after_tweet:
+            raise exception.StopExtraction()
         for profile in (kwdict.get("user", {}), kwdict.get("author", {})):
             if (is_target(profile)
                     and profile.get("profile_image") and not self.pipeline.avatar_requested):
@@ -326,6 +338,8 @@ class ArchiveJob(AssetJob):
         if self.ignore:
             return
         key = (str(kwdict["tweet_id"]), kwdict["num"])
+        if key in self.known:
+            self.stop_after_tweet = True
         self.pipeline.submit(key, download_asset, url, asset_metadata(kwdict))
 
     def handle_finalize(self):
@@ -356,7 +370,7 @@ def build_config(payload):
         "replies": settings["include_replies"], "pinned": False,
         "strategy": "with_replies" if settings["include_replies"] else "media",
         "ratelimit": "abort", "retries-api": 3,
-        "sleep-request": "1.0-2.0", "sleep": 0, "skip": True,
+        "sleep-request": "2.0-4.0", "sleep": 0, "skip": True,
         "archive-reuse": False, "async": False,
         "path-restrict": "windows", "path-extended": True,
     }
@@ -457,6 +471,18 @@ def main():
             return run_external()
         identity = "id:" + PAYLOAD["user_id"] if PAYLOAD.get("user_id") else PAYLOAD["handle"]
         from gallery_dl import extractor
+        from gallery_dl.extractor.twitter import TwitterAPI
+        original_rate_limit = TwitterAPI._handle_ratelimit
+
+        def report_rate_limit(api, response):
+            # Do not expose URLs, cookies or other response headers in the log.
+            reset = response.headers.get("x-rate-limit-reset", "")
+            if not str(reset).isdigit():
+                reset = ""
+            emit("rate_limit", actual=response.status_code == 429, reset=reset)
+            return original_rate_limit(api, response)
+
+        TwitterAPI._handle_ratelimit = report_rate_limit
         profile_extractor = extractor.find(f"https://x.com/{identity}/info")
         for _, _, profile in profile_extractor:
             emit("profile", user_id=str(profile["id"]), handle=profile["name"], display_name=profile["nick"])

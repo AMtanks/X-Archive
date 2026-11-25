@@ -6,6 +6,72 @@ from app.engine import Engine
 from app.store import Store
 
 
+def test_existing_rate_cooldown_is_shortened_to_fixed_interval(tmp_path):
+    from datetime import timedelta
+    class Vault:
+        def read(self): return {'auth_token': 'fake'}
+    for source in ('', 'server'):
+        store = Store(tmp_path / (source or 'legacy'))
+        later = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+        store.save_settings({'retry_upgrade_done': True, 'rate_limit_until': later, 'rate_limit_source': source})
+        store.update_author(1, status='error', error='Rate limit exceeded', next_run=later, retry_full=1)
+        Engine(store, Vault())
+        author = store.author(1)
+        assert 0 < (datetime.fromisoformat(author['next_run']) - datetime.now(timezone.utc)).total_seconds() <= 180
+        assert author['next_run'] == store.get_setting('rate_limit_until')
+        assert author['retry_full'] == 1
+
+
+def test_rate_limit_response_retries_in_three_minutes_despite_server_reset(tmp_path, monkeypatch):
+    import app.engine as engine_module
+    from datetime import timedelta
+    class Vault:
+        def read(self): return {"auth_token": "test-token"}
+    reset = int((datetime.now(timezone.utc) + timedelta(minutes=7)).timestamp())
+    class Process:
+        def __init__(self, *args, **kwargs):
+            self.stdin = io.StringIO()
+            self.stdout = io.StringIO('\n'.join(json.dumps(x) for x in [
+                {"event":"rate_limit", "actual":True, "reset":str(reset)},
+                {"event":"log", "level":"error", "message":"Rate limit exceeded"}]) + '\n')
+        def wait(self, **kwargs): return 1
+        def poll(self): return 1
+    monkeypatch.setattr(engine_module.subprocess, 'Popen', Process)
+    store = Store(tmp_path / 'data')
+    engine = Engine(store, Vault())
+    engine._run(1, True)
+    author = store.author(1)
+    assert '429' in author['error']
+    assert 2.9 < (datetime.fromisoformat(author['next_run']) - datetime.now(timezone.utc)).total_seconds() / 60 <= 3
+    assert author['retry_full'] == 1
+
+
+def test_cooled_x_does_not_block_other_platforms(tmp_path):
+    import threading
+    from datetime import timedelta
+    class Vault:
+        def read(self): return {'auth_token': 'fake'}
+    store = Store(tmp_path / 'data')
+    store.save_settings({'automatic': False, 'rate_limit_until': (datetime.now(timezone.utc)+timedelta(hours=1)).isoformat()})
+    other = store.add_author('SecondUser')
+    with store.connect() as db:
+        db.execute("UPDATE authors SET handle='instagram:test' WHERE id=?", (other,))
+    engine = Engine(store, Vault())
+    seen = []
+    done = threading.Event()
+    engine._run = lambda author_id, full: (seen.append(author_id), done.set())
+    # Direct tickets avoid creating or reading real platform credentials.
+    for aid in (1, other):
+        engine.pending[aid] = str(aid)
+        engine.queue.put((1, next(engine.sequence), aid, False, str(aid), False))
+    engine.start()
+    try:
+        assert done.wait(3)
+        assert seen == [other]
+    finally:
+        engine.close()
+
+
 def test_rate_limit_backoff_keeps_full_retry_and_watermark(tmp_path, monkeypatch):
     import app.engine as engine_module
     class Vault:
@@ -24,11 +90,14 @@ def test_rate_limit_backoff_keeps_full_retry_and_watermark(tmp_path, monkeypatch
     author = store.author(1)
     assert author['last_success'] == '2026-01-01T00:00:00+00:00'
     assert author['retry_full'] == 1 and author['retry_count'] == 1
-    assert 14 < (datetime.fromisoformat(author['next_run']) - datetime.now(timezone.utc)).total_seconds() / 60 <= 15
+    assert 2.9 < (datetime.fromisoformat(author['next_run']) - datetime.now(timezone.utc)).total_seconds() / 60 <= 3
     assert store.get_setting('rate_limit_until') == author['next_run']
     engine._run(1, True)
     assert store.author(1)['retry_count'] == 2
-    assert 29 < (datetime.fromisoformat(store.author(1)['next_run']) - datetime.now(timezone.utc)).total_seconds() / 60 <= 30
+    assert 2.9 < (datetime.fromisoformat(store.author(1)['next_run']) - datetime.now(timezone.utc)).total_seconds() / 60 <= 3
+    store.update_author(1, retry_count=18)
+    engine._run(1, True)
+    assert 2.9 < (datetime.fromisoformat(store.author(1)['next_run']) - datetime.now(timezone.utc)).total_seconds() / 60 <= 3
     assert engine.enqueue(1) is True
     assert engine.queue.get_nowait()[3] is True
 

@@ -129,6 +129,50 @@ def test_incremental_skips_old_tweet(payload, local_media, monkeypatch):
     assert worker.SUMMARY["downloaded"] == 1
 
 
+def test_x_incremental_stops_after_complete_known_post(payload, local_media, monkeypatch):
+    store = Store(payload['data_dir'])
+    known = Path(payload['settings']['download_dir']) / 'SampleUser' / 'known.jpg'
+    known.parent.mkdir(parents=True)
+    known.write_bytes(b'known')
+    with store.connect() as db:
+        db.execute('INSERT INTO media VALUES (?,?,?,?,?,?,?,?)',
+                   (str(known), 1, '12345', 1, '2020-02-03', 5, 'image', '2020-02-03'))
+    payload.update(stop_at_known=True, author_id=1)
+    base, hits = local_media
+    assert setup_job(payload, base, monkeypatch).run() == 0
+    assert all(hits[f'/12345/{n}.{ "mp4" if n == 4 else "jpg"}'] == 1 for n in range(1, 5))
+    assert hits['/12346/1.jpg'] == 0
+
+
+def test_known_media_uses_incremental_even_after_interrupted_history(tmp_path):
+    class Vault:
+        def read(self): return {'auth_token':'fake'}
+    store = Store(tmp_path / 'data')
+    store.update_author(1, last_success=None, retry_full=1)
+    with store.connect() as db:
+        db.execute('INSERT INTO media VALUES (?,?,?,?,?,?,?,?)',
+                   (str(tmp_path/'saved.jpg'), 1, '123', 1, '2020-01-01', 1, 'image', '2020-01-01'))
+    # Avoid catalog reconciliation: this test only checks scheduling policy.
+    engine = Engine(store, Vault())
+    engine.maintain_catalog = lambda: None
+    assert engine.enqueue(1, manual=True)
+    assert engine.queue.get_nowait()[3] is False
+
+
+def test_x_incremental_treats_ignored_media_as_known(payload, local_media, monkeypatch):
+    store = Store(payload['data_dir'])
+    ignored = Path(payload['settings']['download_dir']) / 'SampleUser' / 'ignored.jpg'
+    with store.connect() as db:
+        db.execute('INSERT INTO exclusions VALUES (?,?,?,?,?,?)',
+                   ('12345', 1, 'SampleUser', str(ignored), 'user', '2020-02-03'))
+    payload.update(stop_at_known=True, author_id=1)
+    base, hits = local_media
+    assert setup_job(payload, base, monkeypatch).run() == 0
+    assert hits['/12345/1.jpg'] == 0
+    assert hits['/12345/2.jpg'] == 1
+    assert hits['/12346/1.jpg'] == 0
+
+
 def test_destination_has_independent_archive(payload):
     first = worker.build_config(payload)["extractor"]["twitter"]["archive"]
     payload["settings"]["download_dir"] += "-different"

@@ -31,6 +31,11 @@ def rate_limited(message):
     return "rate limit" in text or "429" in text
 
 
+def has_saved_media(store, author_id):
+    with store.connect() as db:
+        return db.execute('SELECT 1 FROM media WHERE author_id=? LIMIT 1', (author_id,)).fetchone() is not None
+
+
 class Engine:
     def __init__(self, store, vault):
         self.store, self.vault = store, vault
@@ -63,6 +68,33 @@ class Engine:
                 self.store.save_settings({"rate_limit_until": rate_until})
             self.store.save_settings({"retry_upgrade_done": True})
 
+        # The previous policy could leave legacy rate-limit errors waiting two hours.
+        # Only shorten unclassified legacy errors; never shorten a known server reset.
+        if not self.store.get_setting("short_rate_retry_upgrade_done", False):
+            if not self.store.get_setting("rate_limit_source", ""):
+                retry_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+                with self.store.connect() as db:
+                    legacy = db.execute("""UPDATE authors SET next_run=?
+                        WHERE status='error' AND lower(error) LIKE '%rate limit%'
+                        AND next_run>? AND instr(handle, ':')=0""", (retry_at, retry_at)).rowcount
+                until = self.store.get_setting("rate_limit_until", "")
+                if legacy and until and until > retry_at:
+                    self.store.save_settings({"rate_limit_until": retry_at})
+            self.store.save_settings({"short_rate_retry_upgrade_done": True})
+
+        # Bring already scheduled X retries forward once to the fixed interval.
+        if not self.store.get_setting("fixed_rate_retry_upgrade_done", False):
+            retry_at = (datetime.now(timezone.utc) + timedelta(minutes=3)).isoformat()
+            with self.store.connect() as db:
+                db.execute("""UPDATE authors SET next_run=? WHERE status='error'
+                    AND instr(handle, ':')=0 AND next_run>?
+                    AND (lower(error) LIKE '%rate limit%' OR error LIKE '%429%'
+                         OR error LIKE '%剩余额度较低%')""", (retry_at, retry_at))
+            until = self.store.get_setting("rate_limit_until", "")
+            if until and until > retry_at:
+                self.store.save_settings({"rate_limit_until": retry_at})
+            self.store.save_settings({"fixed_rate_retry_upgrade_done": True})
+
     def start(self):
         self.thread = threading.Thread(target=self._loop, daemon=True, name="download-queue")
         self.thread.start()
@@ -77,6 +109,7 @@ class Engine:
         if author["folder_removed"]:
             raise ValueError("本地文件夹已删除；请先恢复文件夹，再手动同步")
         platform = author['handle'].split(':', 1)[0] if ':' in author['handle'] else 'twitter'
+        has_media = platform == 'twitter' and has_saved_media(self.store, author_id)
         from .secrets import PlatformVault
         credentials = self.vault.read() if platform == 'twitter' else PlatformVault(self.store.root, platform).read()
         if not credentials.get({'twitter': 'auth_token', 'instagram': 'sessionid', 'weibo': 'SUB'}[platform]):
@@ -92,7 +125,7 @@ class Engine:
                 self.manual_pending.add(author_id)
             self.store.update_author(author_id, status="queued", error="")
             self.queue.put((0 if manual else 1, next(self.sequence), author_id,
-                            full or bool(author["retry_full"]), ticket, manual))
+                            full or (bool(author["retry_full"]) and not has_media), ticket, manual))
             self.queue_wakeup.set()
             return True
 
@@ -162,7 +195,8 @@ class Engine:
                     author = self.store.author(author_id)
                     if not manual and author and ':' not in author['handle'] and until and until > utcnow():
                         # Keep automatic retries parked, but let a manual request pass.
-                        self.queue.put(item)
+                        # Rotate parked X tasks so eligible Instagram/Weibo work can run.
+                        self.queue.put((priority, next(self.sequence), author_id, full, ticket, manual))
                         deferred = True
                     else:
                         self.current, self.cancelled = author_id, False
@@ -194,7 +228,9 @@ class Engine:
         if not author:
             return
         started = utcnow()
-        mode = "full" if full or not author["last_success"] else "incremental"
+        platform = author['handle'].split(':', 1)[0] if ':' in author['handle'] else 'twitter'
+        has_media = platform == 'twitter' and has_saved_media(self.store, author_id)
+        mode = "full" if full or (not author["last_success"] and not has_media) else "incremental"
         with self.store.connect() as db:
             run_id = db.execute("INSERT INTO runs(author_id,handle,mode,status,started_at) VALUES (?,?,?,'running',?)",
                                 (author_id, author["handle"], mode, started)).lastrowid
@@ -207,7 +243,9 @@ class Engine:
                    "platform": platform,
                    "user_id": author.get("user_id", ""), "folder_name": author.get("folder_name", ""),
                    "archive_key": author.get("archive_key", ""),
-                   "data_dir": str(self.store.root), "cutoff": incremental_cutoff(author, settings, full),
+                   "data_dir": str(self.store.root), "author_id": author_id,
+                   "stop_at_known": platform == 'twitter' and mode == 'incremental',
+                   "cutoff": None if platform == 'twitter' else incremental_cutoff(author, settings, full),
                    "proxy": settings["proxy"] or getproxies().get("https") or getproxies().get("http")}
         env = dict(os.environ, PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1")
         # pythonw has no standard streams in its child unless redirected; use console interpreter hidden.
@@ -216,6 +254,7 @@ class Engine:
         command = [str(interpreter), "--worker"] if getattr(sys, "frozen", False) else [str(interpreter), "-m", "app.worker"]
         downloaded = skipped = 0
         errors = []
+        limit_info = None
         seen = 0
         done = False
         with self.lock:
@@ -265,6 +304,8 @@ class Engine:
                         db.execute("UPDATE runs SET downloaded=?,skipped=? WHERE id=?", (downloaded, skipped, run_id))
                     if kind == "saved":
                         self.store.add_event(run_id, "success", Path(event["path"]).name)
+                elif kind == "rate_limit":
+                    limit_info = event
                 elif kind == "log":
                     message = event.get("message", "")
                     for value in credentials.values():
@@ -294,14 +335,26 @@ class Engine:
         interval = self.store.get_setting("interval_minutes", 60)
         retryable = not ok and not cancelled and transient_failure(" ".join(errors) or error)
         count = author["retry_count"] + 1 if retryable else 0
-        delay = min(120, 15 * 2 ** min(count - 1, 3)) if retryable and rate_limited(" ".join(errors)) else min(60, 5 * 2 ** min(count - 1, 4)) if retryable else interval if ok or cancelled else max(15, interval)
+        delay = 3 if retryable and platform == 'twitter' and rate_limited(" ".join(errors)) else min(120, 15 * 2 ** min(count - 1, 3)) if retryable and rate_limited(" ".join(errors)) else min(60, 5 * 2 ** min(count - 1, 4)) if retryable else interval if ok or cancelled else max(15, interval)
         next_run = (datetime.now(timezone.utc) + timedelta(minutes=delay)).isoformat()
+        rate_source = "fallback"
+        if retryable and limit_info:
+            error = ("X 接口返回 429，暂时限制请求" if limit_info.get("actual") else
+                     "X 接口剩余额度较低，已提前暂停")
+            try:
+                reset = datetime.fromtimestamp(int(limit_info.get("reset", "")), timezone.utc) + timedelta(seconds=30)
+                now = datetime.now(timezone.utc)
+                if platform != 'twitter' and now < reset < now + timedelta(days=7):
+                    next_run = reset.isoformat()
+                    rate_source = "server"
+            except (ValueError, TypeError, OSError, OverflowError):
+                pass
         if platform == 'twitter' and retryable and rate_limited(" ".join(errors)):
-            self.store.save_settings({"rate_limit_until": next_run})
+            self.store.save_settings({"rate_limit_until": next_run, "rate_limit_source": rate_source})
         fields = {"status": "idle" if ok or cancelled else "error", "error": error,
                   "retry_count": count, "retry_full": int(retryable and mode == "full"), "next_run": next_run}
         if retryable:
-            self.store.add_event(run_id, "info", f"等待 {delay} 分钟后自动重试；从扫描范围重新检查，已保存及忽略的文件会跳过")
+            self.store.add_event(run_id, "info", f"预计 {next_run} 自动重试；从扫描范围重新检查，已保存及忽略的文件会跳过")
         if ok:
             fields["last_success"] = started  # start, not end: posts published during the scan stay eligible
         self.store.update_author(author_id, **fields)

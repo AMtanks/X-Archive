@@ -3,7 +3,7 @@
 // server diagnostics are left intact. The original text stays available for switching back.
 (() => {
   const translations = {
-    'Media Archive 首页':'Media Archive home','主导航':'Main navigation','推主':'Authors','媒体':'Media','同步记录':'Sync history','设置':'Settings',
+    'X Archive 首页':'X Archive home','主导航':'Main navigation','推主':'Authors','媒体':'Media','同步记录':'Sync history','设置':'Settings',
     '筛选平台':'Filter by platform','全部':'All','微博':'Weibo',
     '正在读取登录状态':'Checking sign-in status','本地运行':'Running locally','打开文件夹':'Open folder',
     '应用连接中断，正在重连。下载任务在后台独立运行。':'Connection lost. Reconnecting; downloads continue in the background.',
@@ -29,9 +29,12 @@
     '推主文件夹首次以“显示名@账号”命名，此后固定。更改位置后会重新扫描。':'Author folders are initially named “display name@handle” and remain fixed. Changing the location triggers a rescan.',
     '同步间隔':'Sync interval','每 15 分钟':'Every 15 minutes','每 30 分钟':'Every 30 minutes','每小时':'Hourly','每 3 小时':'Every 3 hours','每 6 小时':'Every 6 hours','每 12 小时':'Every 12 hours','每天':'Daily',
     '增量补查':'Incremental overlap','回看 1 天':'Look back 1 day','回看 3 天（推荐）':'Look back 3 days (recommended)','回看 7 天':'Look back 7 days','回看 30 天':'Look back 30 days','回看 90 天':'Look back 90 days',
+    '回看天数适用于 Instagram 和微博；X 增量同步会在遇到已有媒体后停止。':'Lookback applies to Instagram and Weibo. X incremental sync stops after encountering known media.',
+    '推主文件夹不存在，请检查保存位置':'The creator folder does not exist. Check the download location.',
     '同时下载':'Concurrent downloads','1 个文件':'1 file','2 个文件':'2 files','4 个文件（推荐）':'4 files (recommended)','6 个文件':'6 files','8 个文件':'8 files',
     '自动增量同步':'Automatic incremental sync','应用运行时，按间隔检查已启用的推主。':'Check enabled authors periodically while the app is running.',
     '媒体范围':'Media scope','回复中的媒体':'Media in replies','转推中的媒体':'Media in reposts','引用推文的原帖媒体':'Original media in quoted posts','修改媒体范围会触发历史补查。':'Changing the media scope triggers a historical rescan.',
+    '修改媒体范围后，如需检查 X 的旧内容，请点击历史补查。':'After changing the media scope, select Historical scan to check older X posts.',
     '网络':'Network','代理':'Proxy','留空使用系统代理，如 http://127.0.0.1:7890':'Leave blank to use the system proxy, e.g. http://127.0.0.1:7890',
     '浏览器能打开 X 但下载失败时，可填写本机代理地址。':'If X opens in your browser but downloads fail, enter your local proxy address.',
     '设置仅保存在本机':'Settings are stored locally','保存':'Save',
@@ -72,6 +75,8 @@
     '暂时无法读取媒体':'Cannot load media','请点击“刷新”重试。':'Select Refresh to try again.','已从本地移除':'Removed locally',
     'Windows 中删除或移动':'Deleted or moved in Windows','应用内删除':'Deleted in the app','允许重新下载':'Allow redownload','删除并忽略，不再补回':'Delete and ignore; do not download again',
     '等待当前扫描结束后立即开始':'Will start after the current scan','即将开始手动同步':'Manual sync starting shortly','X 限流冷却中，可点立即同步尝试':'X rate limit cooldown; select Sync now to try',
+    'X 接口返回 429，暂时限制请求':'X returned HTTP 429 and temporarily limited requests','X 接口剩余额度较低，已提前暂停':'X quota is running low; paused early',
+    'X 正在限流冷却，手动同步仍会尝试；连续尝试可能延长等待':'X is cooling down. Manual sync will try now; repeated attempts may prolong the wait.',
     '其他平台账号':'Other platform accounts','凭证加密保存在本机。':'Credentials are encrypted and stored locally.',
     '登录 Instagram':'Sign in to Instagram','登录微博':'Sign in to Weibo',
     '输入 X 账号，或 X、Instagram、微博的主页链接，每行一个。':'Enter an X account or an X, Instagram, or Weibo profile URL, one per line.',
@@ -153,6 +158,7 @@
     [/^保存目录：(.+)$/, (_, folder) => `Save folder: ${folder}`],
     [/^推主头像已保存到 (.+)$/, (_, path) => `Avatar saved to ${path}`],
     [/^等待 (\d+) 分钟后自动重试；从扫描范围重新检查，已保存及忽略的文件会跳过$/, (_, n) => `Retrying in ${n} minutes; saved and ignored files will be skipped.`],
+    [/^预计 (.+) 自动重试；从扫描范围重新检查，已保存及忽略的文件会跳过$/, (_, date) => `Retry expected at ${date}; saved and ignored files will be skipped.`],
     [/^(本轮扫描完成|任务已停止|本轮未完成)：新增 (\d+)，跳过 (\d+)。(.*)$/, (_, status, added, skipped, error) => `${{'本轮扫描完成':'Scan completed','任务已停止':'Task stopped','本轮未完成':'Scan incomplete'}[status]}: ${added} added, ${skipped} skipped. ${translate(error)}`],
     [/^(自动同步暂不可用|任务异常|头像暂未更新|并发下载任务失败)：(.+)$/, (_, type, reason) => `${{'自动同步暂不可用':'Automatic sync unavailable','任务异常':'Task error','头像暂未更新':'Avatar not updated','并发下载任务失败':'Concurrent download failed'}[type]}: ${reason}`],
     [/^([A-Za-z]+(?:Error|Exception)): (.+)$/, (_, type, message) => `${type}: ${translate(message)}`],
